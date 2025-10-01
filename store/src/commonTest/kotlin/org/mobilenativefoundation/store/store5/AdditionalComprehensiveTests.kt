@@ -19,6 +19,7 @@ import app.cash.turbine.test
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
@@ -43,7 +44,11 @@ class AdditionalComprehensiveTests {
     @Test
     fun test1_storeHandlesConcurrentRequestsForSameKey() =
         testScope.runTest {
-            val fetcher = FakeFetcher(1 to "data")
+            var fetchCount = 0
+            val fetcher = Fetcher.of<Int, String> {
+                fetchCount++
+                "data"
+            }
             val store = StoreBuilder.from(fetcher).scope(testScope).build()
 
             val jobs = (1..10).map {
@@ -51,7 +56,7 @@ class AdditionalComprehensiveTests {
             }
 
             jobs.forEach { it.join() }
-            assertEquals(1, fetcher.fetchCount)
+            assertEquals(1, fetchCount)
         }
 
     @Test
@@ -139,7 +144,11 @@ class AdditionalComprehensiveTests {
     @Test
     fun test6_storeWithCustomValidator() =
         testScope.runTest {
-            val fetcher = FakeFetcher(1 to "invalid_data", 1 to "valid_data")
+            var fetchCount = 0
+            val responses = listOf("invalid_data", "valid_data")
+            val fetcher = Fetcher.of<Int, String> {
+                responses[fetchCount++]
+            }
             val store = StoreBuilder.from(fetcher)
                 .validator { data: String -> data.startsWith("valid") }
                 .scope(testScope)
@@ -147,7 +156,7 @@ class AdditionalComprehensiveTests {
 
             val result = store.fresh(1)
             assertEquals("valid_data", result)
-            assertEquals(2, fetcher.fetchCount)
+            assertEquals(2, fetchCount)
         }
 
     @Test
@@ -197,7 +206,7 @@ class AdditionalComprehensiveTests {
             val job1 = launch { store.fresh(1) }
             val job2 = launch {
                 delay(10)
-                store.get(StoreReadRequest.cached(1, refresh = false))
+                store.stream(StoreReadRequest.cached(1, refresh = false)).first()
             }
 
             advanceUntilIdle()
@@ -222,11 +231,9 @@ class AdditionalComprehensiveTests {
             val persister = InMemoryPersister<Int, LocalData>()
             val store = StoreBuilder.from(
                 fetcher = fetcher,
-                sourceOfTruth = persister.asSourceOfTruth()
-            )
-                .withConversions(converter)
-                .scope(testScope)
-                .build()
+                sourceOfTruth = persister.asSourceOfTruth(),
+                converter = converter
+            ).scope(testScope).build()
 
             val result = store.fresh(1)
             assertEquals(LocalData("network"), result)
